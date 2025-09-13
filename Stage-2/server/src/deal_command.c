@@ -2,6 +2,7 @@
 #include "../include/trans_files.h"
 #include "../include/network.h"
 #include "../include/commons.h"
+#include "../include/log.h"
 
 int deal_client_message(block_queue_t* queue, int epfd, int netfd)
 {
@@ -32,10 +33,12 @@ int deal_client_message(block_queue_t* queue, int epfd, int netfd)
         queue_enque(queue, p_node);
     }
 
+
     if(ret == 0) // 客户端断开
     {  
         printf("\nnetfd %d is closed.\n", netfd);
         del_epoll_readfd(epfd, netfd);
+        log_client_notconnection(netfd);
         close(netfd);
     }
     return 0;
@@ -43,6 +46,9 @@ int deal_client_message(block_queue_t* queue, int epfd, int netfd)
 
 // 每个子线程处理任务节点，子线程调用该函数
 int do_task(node_t * p_node){
+    // 日志记录
+    log_client_operation(p_node);
+
     static char path[ARR_SIZE] = {0};
     char server_path[ARR_SIZE] = {0};
     getcwd(server_path, sizeof(server_path));
@@ -56,7 +62,6 @@ int do_task(node_t * p_node){
     switch(p_node->type)
     {
     case CHATHEAD:
-        //
         memset(path, 0, sizeof(path));
         memcpy(path, p_node->content, sizeof(p_node->content));  
         break;

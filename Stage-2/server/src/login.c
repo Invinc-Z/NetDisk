@@ -2,6 +2,7 @@
 #include "../include/tlc_packet.h"
 #include "../include/commons.h"
 #include "../include/trans_files.h"
+#include "../include/log.h"
 
 int user_login_verify(int netfd)
 {
@@ -86,6 +87,7 @@ int verify_username_passwd(const char* username, const char* passwd)
     if(strcmp(sp->sp_pwdp, crypt(passwd, salt)) == 0)
     {
         printf("password is correct.\n");
+        log_client_user_login(sp->sp_namp);
         // 在这里创建家目录
         char home[ARR_SIZE] = {0};
         strcat(home, "./");

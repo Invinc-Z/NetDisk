@@ -36,6 +36,7 @@
 #include <stdbool.h>
 #include <sys/sendfile.h>
 #include <libgen.h>  // 提供 dirname() 函数（POSIX 系统）
+#include <syslog.h>  // 提供 openlog syslog closelog
 
 // 检查命令行参数数量是否符合预期
 #define ARGS_CHECK(argc, expected) \

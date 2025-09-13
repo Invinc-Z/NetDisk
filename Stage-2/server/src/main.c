@@ -10,6 +10,7 @@
 #include "../include/network.h"
 #include "../include/deal_command.h"
 #include "../include/login.h"
+#include "../include/log.h"
 #define EPOLL_EVENT_SIZE 1024
 
 int exit_pipe[2];
@@ -93,6 +94,8 @@ int main(int argc, char * argv[])
             if(p_event_array[i].data.fd == listenfd) {
                 //有新的客户端连接
                 int netfd = accept(listenfd, NULL, NULL);
+                //日志记录建立连接
+                log_client_connection(netfd);
                 ERROR_CHECK(netfd, -1, "accept");
                 printf("I am master, I got a netfd = %d\n", netfd);
                 while(user_login_verify(netfd) != 0)
