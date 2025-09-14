@@ -57,6 +57,11 @@ int deal_command(int sockfd, const char* username) {
         if (puts_client(sockfd, packet.content) == -1)
             return -1;
     }
+    if(packet.type == GETS)  
+    {
+        if (gets_client(sockfd, packet.content) == -1)
+            return -1;
+    }
 
     char route[ARR_SIZE] = {0};     // 接收虚拟路径
     char content[ARR_SIZE] = {0};   // 接收返回内容
@@ -213,7 +218,9 @@ int deal_command(int sockfd, const char* username) {
         printf("%s\n", packet.content);
         break;
     case GETS:
-        gets_client(sockfd, parameter, DOWNLOAD_PATH);
+        recvn(sockfd, &packet.length, sizeof(packet.length));
+        recvn(sockfd, packet.content, packet.length);
+        printf("%s\n", packet.content);
         break;
     case TREE:
         // 接收路径

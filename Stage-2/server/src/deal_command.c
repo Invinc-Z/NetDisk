@@ -22,8 +22,8 @@ int deal_client_message(block_queue_t* queue, int epfd, int netfd)
         ret = recvn(netfd, p_node->content, length);
         if(ret > 0){
             // 往线程池中添加任务节点
-            if(p_node->type == PUTS){
-                // 上传任务 先暂时从epoll实例中删除监听
+            if(p_node->type == PUTS || p_node->type == GETS){
+                // 上传任务 下载任务 先暂时从epoll实例中删除监听
                 del_epoll_readfd(epfd, netfd);                
             }
             queue_enque(queue, p_node); 
@@ -124,10 +124,12 @@ int do_task(node_t * p_node){
     case PUTS:
         ret = puts_server(p_node->netfd, p_node->content, server_path);
         // 上传任务完成 添加监听
-        add_epoll_readfd(p_node->epfd, p_node->netfd);  
+        add_epoll_readfd(p_node->epfd, p_node->netfd);
         break;
     case GETS:
         ret = gets_server(p_node->netfd, p_node->content, server_path);
+        // 下载任务完成 添加监听
+        add_epoll_readfd(p_node->epfd, p_node->netfd);
         break;
     case TREE:  // 发送虚拟路径和返回内容
         ret = tree_dir(p_node->netfd, p_node->content, server_path); 

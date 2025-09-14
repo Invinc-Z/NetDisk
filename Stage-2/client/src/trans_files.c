@@ -1,6 +1,7 @@
 #include "../include/trans_files.h"
 #include "../include/commons.h"
 #include "../include/tlc_packet.h"
+#include "../include/deal_command.h"
 
 // 发送消息
 int sendn(int sockfd, const void * buff, int len)
@@ -34,21 +35,32 @@ int recvn(int sockfd, void * buff, int len)
     return cur_pos;
 }
 
-int gets_client(int sockfd, const char* filename, const char* download_path)
+int gets_client(int sockfd, const char* filename)
 {
+    // 初始化packet
     tlc_packet_t packet;
     memset(&packet, 0, sizeof(packet));
-    // 接收文件是否存在错误信息
+
+    // 1. 接收标志,文件是否存在错误信息
+    recvn(sockfd, (char*)&packet.type, sizeof(packet.type));
     recvn(sockfd, (char*)&packet.length, sizeof(packet.length));
     recvn(sockfd, packet.content, packet.length);
-
-    //接收文件大小
-    off_t filesize = *(int*)(packet.content);
-    if(filesize == 0)
-    {
-        printf("file is not exist.\n\n");
+    if(*(int*)(packet.content) == -1)
+    {   // 文件不存在
+        printf("Can not open file\n\n");
         return -1;
     }
+    
+    // 文件存在
+    // 2. 接收下载文件大小
+    off_t filesize = 0;
+    memset(&packet, 0, sizeof(packet));
+    recvn(sockfd, (char*)&packet.type, sizeof(packet.type));
+    recvn(sockfd, (char*)&packet.length, sizeof(packet.length));
+    recvn(sockfd, packet.content, packet.length);
+    filesize = *(int*)packet.content;
+
+    // 3. 发送已存在文件的大小
 
     // 拼接文件路径和文件名
     char *cwd = getcwd(NULL, 0);
@@ -56,7 +68,7 @@ int gets_client(int sockfd, const char* filename, const char* download_path)
     char download_home[ARR_SIZE] = {0};
     strcat(file_path, cwd);
     strcat(file_path, "/");
-    strcat(file_path, download_path);
+    strcat(file_path, DOWNLOAD_PATH);
     strcpy(download_home, file_path);
     strcat(file_path, "/");
     strcat(file_path, filename);
@@ -68,21 +80,56 @@ int gets_client(int sockfd, const char* filename, const char* download_path)
     int fd = open(file_path, O_RDWR|O_CREAT,0666);
     ERROR_CHECK(fd, -1, "open");
 
+    // 发送已经存在文件字节数，不存在发送0
+    int exist_filesize = 0;
+    struct stat statbuf;
+    if(fstat(fd, &statbuf) == 0)
+        exist_filesize = statbuf.st_size;
+    else
+        exist_filesize = 0;
+    memset(&packet, 0, sizeof(packet));
+    packet.type = GETS;
+    packet.length = sizeof(exist_filesize);
+    memcpy(packet.content, &exist_filesize, sizeof(exist_filesize));
+    send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
+
+    // 重定位文件读写偏移量   
+    if(exist_filesize > 0)
+    {
+        lseek(fd, exist_filesize, SEEK_SET);
+    }
+    // 为内存映射（mmap）准备文件大小
     ftruncate(fd, filesize);
 
-    while(1)
+    // 4. 接收文件
+    if(filesize > 1024 * 1024 * 100)
     {
-        memset(&packet, 0, sizeof(packet));
-        recvn(sockfd, (char*)&packet.type, sizeof(packet.type));
-        recvn(sockfd, (char*)&packet.length, sizeof(packet.length));
-        if(packet.length > 0)
-        {
-            recvn(sockfd, packet.content, packet.length);
-            write(fd, packet.content, packet.length);
-        }
-        else
-            break;
+        size_t page_size = sysconf(_SC_PAGESIZE);
+        off_t aligned_exist_size = (exist_filesize / page_size) * page_size;
+        off_t offset_in_page = exist_filesize - aligned_exist_size;
+
+        // 实际映射长度
+        size_t map_length = filesize - aligned_exist_size;
+        char* map = (char*)mmap(NULL, map_length, PROT_WRITE, MAP_SHARED, fd, aligned_exist_size);
+        recvn(sockfd, map + offset_in_page, filesize - exist_filesize);
+        munmap(map, map_length);
     }
+    else{
+         while(1)
+        {
+            memset(&packet, 0, sizeof(packet));
+            recvn(sockfd, (char*)&packet.type, sizeof(packet.type));
+            recvn(sockfd, (char*)&packet.length, sizeof(packet.length));
+            if(packet.length > 0)
+            {
+                recvn(sockfd, packet.content, packet.length);
+                write(fd, packet.content, packet.length);
+            }
+            else
+                break;
+        }
+    }
+    
     close(fd);
     printf("recv complete\n\n");
     return 0;
@@ -91,8 +138,10 @@ int gets_client(int sockfd, const char* filename, const char* download_path)
 int puts_client(int sockfd, const char* filename)
 {
     int file_error_flag = 0; // 0 文件可以打开 -1 文件无法打开
+    // 初始化packet
     tlc_packet_t packet;
     memset(&packet, 0, sizeof(packet));
+    // 1. 发送文件是否存在标志
     packet.type = PUTS;
     // 可读打开上传文件
     int fd = open(filename, O_RDONLY);
@@ -114,33 +163,63 @@ int puts_client(int sockfd, const char* filename)
     send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
     printf("open file %s succeed.\n", filename);
 
-    //文件存在，获取上传文件大小
+    // 2. 接收服务端已有文件字节数
+    int exist_filesize = 0;
+    memset(&packet, 0, sizeof(packet));
+    recvn(sockfd, (char*)&packet.type, sizeof(packet.type));
+    recvn(sockfd, (char*)&packet.length, sizeof(packet.length));
+    recvn(sockfd, packet.content, packet.length);
+    exist_filesize = *(int*)packet.content;
+
+    
+    // 获取上传文件大小
     struct stat statbuf;
     memset(&statbuf, 0, sizeof(statbuf));
     fstat(fd, &statbuf);
     off_t filesize = statbuf.st_size;
 
-    // 发送文件大小
+    // 3. 发送文件大小
     memset(packet.content, 0, sizeof(packet.content));
     packet.length = sizeof(filesize);
     memcpy(packet.content, &filesize, packet.length);
     send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
 
-    // 发送文件
-    while(1)
+    if(exist_filesize > 0)
     {
-        memset(packet.content, 0, sizeof(packet.content));
-        packet.length = read(fd, packet.content, sizeof(packet.content));
-        if(packet.length > 0)
-        {
-            send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
-        }
-        else
-            break;
+        lseek(fd, exist_filesize, SEEK_SET);
     }
-    // 发送结束标志
-    packet.length = 0;
-    send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
+
+    // 4. 发送文件
+    if(filesize > 1024 * 1024 * 100)  // > 100M mmap
+    {
+        size_t page_size = sysconf(_SC_PAGESIZE);
+        off_t aligned_exist_size = (exist_filesize / page_size) * page_size;
+        off_t offset_in_page = exist_filesize - aligned_exist_size;
+
+        // 实际映射长度
+        size_t map_length = filesize - aligned_exist_size;
+
+        char* map = (char*)mmap(NULL, map_length, PROT_READ, MAP_PRIVATE, fd, aligned_exist_size);
+        sendn(sockfd, map + offset_in_page, filesize - exist_filesize);
+        munmap(map, map_length);
+    }
+    else{
+        while(1)
+        {
+            memset(packet.content, 0, sizeof(packet.content));
+            packet.length = read(fd, packet.content, sizeof(packet.content));
+            if(packet.length > 0)
+            {
+                send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
+            }
+            else
+                break;
+        }
+        // 发送结束标志
+        packet.length = 0;
+        send(sockfd, &packet, sizeof(packet.type) + sizeof(packet.length) + packet.length, MSG_NOSIGNAL);
+    }
+
     close(fd);
     printf("send complete!\n");
     return 0;

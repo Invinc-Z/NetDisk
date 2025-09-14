@@ -19,6 +19,10 @@
 
 #include <termios.h>
 
+#include <sys/mman.h> // mmap
+
+
+
 // 检查命令行参数数量是否符合预期
 #define ARGS_CHECK(argc, expected) \
     do { \
